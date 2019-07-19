@@ -16,6 +16,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/iotexproject/iotex-address/address"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/require"
 
@@ -40,10 +41,122 @@ import (
 var (
 	deployHash  hash.Hash256                                                                           // in block 2
 	setHash     hash.Hash256                                                                           // in block 3
-	getHash     hash.Hash256                                                                           // in block 4
-	setTopic, _ = hex.DecodeString("0000000000000000000000000000000000000000000000000000000000001f40") // in block 3
+	shrHash     hash.Hash256                                                                           // in block 4
+	shlHash     hash.Hash256                                                                           // in block 5
+	sarHash     hash.Hash256                                                                           // in block 6
+	extHash     hash.Hash256                                                                           // in block 7
+	setTopic, _ = hex.DecodeString("fe00000000000000000000000000000000000000000000000000000000001f40") // in block 3
 	getTopic, _ = hex.DecodeString("0000000000000000000000000000000000000000000000000000000000000001") // in block 4
+	shrTopic, _ = hex.DecodeString("00fe00000000000000000000000000000000000000000000000000000000001f") // in block 4
+	shlTopic, _ = hex.DecodeString("fe00000000000000000000000000000000000000000000000000000000001f00") // in block 5
+	sarTopic, _ = hex.DecodeString("fffe00000000000000000000000000000000000000000000000000000000001f") // in block 6
+	extTopic, _ = hex.DecodeString("bac10f4902d437944b20f334abfd6d30df7f1635528c0f6d6aa34c779cdb6847") // in block 7
 )
+
+func addTestingConstantinopleBlocks(bc Blockchain) error {
+	// Add block 1
+	addr0 := identityset.Address(27).String()
+	priKey0 := identityset.PrivateKey(27)
+	data, err := hex.DecodeString("608060405234801561001057600080fd5b5061045f806100206000396000f3fe608060405234801561001057600080fd5b506004361061007d5760003560e01c8063744f5f831161005b578063744f5f83146100d857806381ea4408146100f6578063a91b33621461014e578063c2bc2efc1461016c5761007d565b80635bec9e671461008257806360fe47b11461008c5780636bc8ecaa146100ba575b600080fd5b61008a6101c4565b005b6100b8600480360360208110156100a257600080fd5b8101908080359060200190929190505050610210565b005b6100c2610247565b6040518082815260200191505060405180910390f35b6100e0610287565b6040518082815260200191505060405180910390f35b6101386004803603602081101561010c57600080fd5b81019080803573ffffffffffffffffffffffffffffffffffffffff1690602001909291905050506102c7565b6040518082815260200191505060405180910390f35b610156610338565b6040518082815260200191505060405180910390f35b6101ae6004803603602081101561018257600080fd5b81019080803573ffffffffffffffffffffffffffffffffffffffff169060200190929190505050610378565b6040518082815260200191505060405180910390f35b5b6001156101e25760008081548092919060010191905055506101c5565b7f8bfaa460932ccf8751604dd60efa3eafa220ec358fccb32ef703f91c509bc3ea60405160405180910390a1565b80600081905550807fdf7a95aebff315db1b7716215d602ab537373cdb769232aae6055c06e798425b60405160405180910390a250565b6000805460081d905080600081905550807fdf7a95aebff315db1b7716215d602ab537373cdb769232aae6055c06e798425b60405160405180910390a290565b6000805460081c905080600081905550807fdf7a95aebff315db1b7716215d602ab537373cdb769232aae6055c06e798425b60405160405180910390a290565b60008073ffffffffffffffffffffffffffffffffffffffff168273ffffffffffffffffffffffffffffffffffffffff16141561030257600080fd5b813f9050807fdf7a95aebff315db1b7716215d602ab537373cdb769232aae6055c06e798425b60405160405180910390a2919050565b6000805460081b905080600081905550807fdf7a95aebff315db1b7716215d602ab537373cdb769232aae6055c06e798425b60405160405180910390a290565b60008073ffffffffffffffffffffffffffffffffffffffff168273ffffffffffffffffffffffffffffffffffffffff1614156103b357600080fd5b7fbde7a70c2261170a87678200113c8e12f82f63d0a1d1cfa45681cbac328e87e382600054604051808373ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff1681526020018281526020019250505060405180910390a1600054905091905056fea265627a7a7230582043b8b8b5e3e6843e8f1fd95a765be61505a1aaa048f4e0352e9ff3318f385e5b64736f6c634300050a0032")
+	if err != nil {
+		return err
+	}
+	ex1, err := testutil.SignedExecution(action.EmptyAddress, priKey0, 1, big.NewInt(0), 500000, big.NewInt(testutil.TestGasPriceInt64), data)
+	if err != nil {
+		return err
+	}
+	deployHash = ex1.Hash()
+	accMap := make(map[string][]action.SealedEnvelope)
+	accMap[addr0] = []action.SealedEnvelope{ex1}
+	blk, err := bc.MintNewBlock(
+		accMap,
+		testutil.TimestampNow(),
+	)
+	if err != nil {
+		return err
+	}
+	if err := bc.ValidateBlock(blk); err != nil {
+		return err
+	}
+	if err := bc.CommitBlock(blk); err != nil {
+		return err
+	}
+
+	// get deployed contract address
+	r, err := bc.GetReceiptByActionHash(deployHash)
+	if err != nil {
+		return err
+	}
+	contract := r.ContractAddress
+
+	addOneBlock := func(nonce uint64, data []byte) (hash.Hash256, error) {
+		ex1, err := testutil.SignedExecution(contract, priKey0, nonce, big.NewInt(0), testutil.TestGasLimit*5, big.NewInt(testutil.TestGasPriceInt64), data)
+		if err != nil {
+			return hash.ZeroHash256, err
+		}
+		accMap := make(map[string][]action.SealedEnvelope)
+		accMap[addr0] = []action.SealedEnvelope{ex1}
+		blk, err = bc.MintNewBlock(
+			accMap,
+			testutil.TimestampNow(),
+		)
+		if err != nil {
+			return hash.ZeroHash256, err
+		}
+		if err := bc.ValidateBlock(blk); err != nil {
+			return hash.ZeroHash256, err
+		}
+		if err := bc.CommitBlock(blk); err != nil {
+			return hash.ZeroHash256, err
+		}
+		return ex1.Hash(), nil
+	}
+
+	// Add block 2
+	// call set() to set storedData = 0xfe...1f40
+	funcSig := hash.Hash256b([]byte("set(uint256)"))
+	data = append(funcSig[:4], setTopic...)
+	setHash, err = addOneBlock(2, data)
+	if err != nil {
+		return err
+	}
+
+	// Add block 3
+	// call shright() to test SHR opcode, storedData => 0x00fe...1f
+	funcSig = hash.Hash256b([]byte("shright()"))
+	shrHash, err = addOneBlock(3, funcSig[:4])
+	if err != nil {
+		return err
+	}
+
+	// Add block 4
+	// call shleft() to test SHL opcode, storedData => 0xfe...1f00
+	funcSig = hash.Hash256b([]byte("shleft()"))
+	shlHash, err = addOneBlock(4, funcSig[:4])
+	if err != nil {
+		return err
+	}
+
+	// Add block 5
+	// call saright() to test SAR opcode, storedData => 0xfffe...1f
+	funcSig = hash.Hash256b([]byte("saright()"))
+	sarHash, err = addOneBlock(5, funcSig[:4])
+	if err != nil {
+		return err
+	}
+
+	// Add block 6
+	// call getCodeHash() to test EXTCODEHASH opcode
+	funcSig = hash.Hash256b([]byte("getCodeHash(address)"))
+	addr, _ := address.FromString(contract)
+	ethaddr := hash.BytesToHash256(addr.Bytes())
+	data = append(funcSig[:4], ethaddr[:]...)
+	extHash, err = addOneBlock(6, data)
+	if err != nil {
+		return err
+	}
+	return nil
+}
 
 func addTestingTsfBlocks(bc Blockchain) error {
 	// Add block 1
@@ -170,7 +283,6 @@ func addTestingTsfBlocks(bc Blockchain) error {
 	if err != nil {
 		return err
 	}
-	setHash = ex1.Hash()
 	accMap = make(map[string][]action.SealedEnvelope)
 	accMap[addr3] = []action.SealedEnvelope{tsf1, tsf2, tsf3, tsf4, tsf5}
 	accMap[addr2] = []action.SealedEnvelope{ex1}
@@ -212,7 +324,6 @@ func addTestingTsfBlocks(bc Blockchain) error {
 	if err != nil {
 		return err
 	}
-	getHash = ex1.Hash()
 	accMap = make(map[string][]action.SealedEnvelope)
 	accMap[addr4] = []action.SealedEnvelope{tsf1, tsf2, tsf3, tsf4}
 	accMap[addr2] = []action.SealedEnvelope{ex1}
@@ -468,6 +579,111 @@ func (ms *MockSubscriber) Counter() int {
 	return ms.counter
 }
 
+func TestConstantinople(t *testing.T) {
+	testValidateBlockchain := func(cfg config.Config, t *testing.T) {
+		require := require.New(t)
+		ctx := context.Background()
+
+		// Create a blockchain from scratch
+		sf, err := factory.NewFactory(cfg, factory.DefaultTrieOption())
+		require.NoError(err)
+		hc := config.NewHeightUpgrade(cfg)
+		acc := account.NewProtocol(hc)
+		sf.AddActionHandlers(acc)
+		registry := protocol.Registry{}
+		require.NoError(registry.Register(account.ProtocolID, acc))
+		rp := rolldpos.NewProtocol(cfg.Genesis.NumCandidateDelegates, cfg.Genesis.NumDelegates, cfg.Genesis.NumSubEpochs)
+		require.NoError(registry.Register(rolldpos.ProtocolID, rp))
+		bc := NewBlockchain(
+			cfg,
+			PrecreatedStateFactoryOption(sf),
+			BoltDBDaoOption(),
+			RegistryOption(&registry),
+			EnableExperimentalActions(),
+		)
+		bc.Validator().AddActionEnvelopeValidators(protocol.NewGenericValidator(bc))
+		exec := execution.NewProtocol(bc, hc)
+		require.NoError(registry.Register(execution.ProtocolID, exec))
+		bc.Validator().AddActionValidators(acc, exec)
+		sf.AddActionHandlers(exec)
+		require.NoError(bc.Start(ctx))
+		require.NoError(addCreatorToFactory(sf))
+		defer func() {
+			require.NoError(bc.Stop(ctx))
+		}()
+
+		require.Nil(addTestingConstantinopleBlocks(bc))
+
+		hashTopic := []struct {
+			h     hash.Hash256
+			topic []byte
+		}{
+			{
+				deployHash,
+				nil,
+			},
+			{
+				setHash,
+				setTopic,
+			},
+			{
+				shrHash,
+				shrTopic,
+			},
+			{
+				shlHash,
+				shlTopic,
+			},
+			{
+				sarHash,
+				sarTopic,
+			},
+			{
+				extHash,
+				extTopic,
+			},
+		}
+
+		for i := 0; i < len(hashTopic); i++ {
+			r, err := bc.GetReceiptByActionHash(hashTopic[i].h)
+			require.NoError(err)
+			require.NotNil(r)
+			require.Equal(uint64(1), r.Status)
+
+			if hashTopic[i].topic != nil {
+				funcSig := hash.Hash256b([]byte("Set(uint256)"))
+				blk, err := bc.GetBlockByHeight(1 + uint64(i))
+				require.NoError(err)
+				f := blk.Header.LogsBloomfilter()
+				require.NotNil(f)
+				require.True(f.Exist(funcSig[:]))
+				require.True(f.Exist(hashTopic[i].topic))
+			}
+		}
+	}
+
+	testTrieFile, _ := ioutil.TempFile(os.TempDir(), "trie")
+	testTriePath := testTrieFile.Name()
+	testDBFile, _ := ioutil.TempFile(os.TempDir(), "db")
+	testDBPath := testDBFile.Name()
+	defer func() {
+		testutil.CleanupPath(t, testTriePath)
+		testutil.CleanupPath(t, testDBPath)
+	}()
+
+	cfg := config.Default
+	cfg.Chain.TrieDBPath = testTriePath
+	cfg.Chain.ChainDBPath = testDBPath
+	cfg.Genesis.EnableGravityChainVoting = false
+	cfg.Plugins[config.GatewayPlugin] = true
+	cfg.Chain.EnableAsyncIndexWrite = false
+	cfg.Genesis.AleutianBlockHeight = 2
+
+	t.Run("test Constantinople contract", func(t *testing.T) {
+		testValidateBlockchain(cfg, t)
+	})
+}
+
 func TestLoadBlockchainfromDB(t *testing.T) {
 	testValidateBlockchain := func(cfg config.Config, t *testing.T) {
 		require := require.New(t)
@@ -657,6 +873,7 @@ func TestLoadBlockchainfromDB(t *testing.T) {
 	cfg.Chain.TrieDBPath = testTriePath
 	cfg.Chain.ChainDBPath = testDBPath
 	cfg.Genesis.EnableGravityChainVoting = false
+	cfg.Plugins[config.GatewayPlugin] = false
 
 	t.Run("load blockchain from DB w/o explorer", func(t *testing.T) {
 		testValidateBlockchain(cfg, t)
