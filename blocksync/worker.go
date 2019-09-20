@@ -15,6 +15,7 @@ import (
 
 	"github.com/iotexproject/iotex-core/config"
 	"github.com/iotexproject/iotex-core/pkg/log"
+	"github.com/iotexproject/iotex-core/pkg/prometheustimer"
 	"github.com/iotexproject/iotex-core/pkg/routine"
 	"github.com/iotexproject/iotex-proto/golang/iotexrpc"
 )
@@ -34,6 +35,8 @@ type syncWorker struct {
 	task             *routine.RecurringTask
 	maxRepeat        int
 	repeatDecayStep  int
+	timerFactory     *prometheustimer.TimerFactory
+	blockSyncReqTime map[uint64]*prometheustimer.Timer
 }
 
 func newSyncWorker(
@@ -42,6 +45,7 @@ func newSyncWorker(
 	unicastHandler UnicastOutbound,
 	neighborsHandler Neighbors,
 	buf *blockBuffer,
+	timerFactory *prometheustimer.TimerFactory,
 ) *syncWorker {
 	w := &syncWorker{
 		chainID:          chainID,
@@ -51,6 +55,8 @@ func newSyncWorker(
 		targetHeight:     0,
 		maxRepeat:        cfg.BlockSync.MaxRepeat,
 		repeatDecayStep:  cfg.BlockSync.RepeatDecayStep,
+		timerFactory:     timerFactory,
+		blockSyncReqTime: make(map[uint64]*prometheustimer.Timer),
 	}
 	if cfg.BlockSync.Interval != 0 {
 		w.task = routine.NewRecurringTask(w.Sync, cfg.BlockSync.Interval)
@@ -70,6 +76,10 @@ func (w *syncWorker) Stop(ctx context.Context) error {
 		return w.task.Stop(ctx)
 	}
 	return nil
+}
+
+func (w *syncWorker) BlockSyncReqTime() map[uint64]*prometheustimer.Timer {
+	return w.blockSyncReqTime
 }
 
 func (w *syncWorker) SetTargetHeight(h uint64) {
@@ -115,6 +125,13 @@ func (w *syncWorker) Sync() {
 			}); err != nil {
 				log.L().Debug("Failed to sync block.", zap.Error(err))
 			}
+		}
+		for k := interval.Start; k <= interval.End; k++ {
+			if _, exist := w.blockSyncReqTime[k]; exist {
+				continue
+			}
+			log.L().Debug("add blocksyncrequest time to the map", zap.Uint64("height", k))
+			w.blockSyncReqTime[k] = w.timerFactory.NewTimer("block request network time")
 		}
 	}
 }

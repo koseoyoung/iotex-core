@@ -8,6 +8,7 @@ package blocksync
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/golang/protobuf/proto"
 	peerstore "github.com/libp2p/go-libp2p-peerstore"
@@ -20,6 +21,7 @@ import (
 	"github.com/iotexproject/iotex-core/consensus"
 	"github.com/iotexproject/iotex-core/pkg/lifecycle"
 	"github.com/iotexproject/iotex-core/pkg/log"
+	"github.com/iotexproject/iotex-core/pkg/prometheustimer"
 	"github.com/iotexproject/iotex-proto/golang/iotexrpc"
 )
 
@@ -73,6 +75,7 @@ type blockSyncer struct {
 	bc               blockchain.Blockchain
 	unicastHandler   UnicastOutbound
 	neighborsHandler Neighbors
+	timerFactory     *prometheustimer.TimerFactory
 }
 
 // NewBlockSyncer returns a new block syncer instance
@@ -83,6 +86,15 @@ func NewBlockSyncer(
 	cs consensus.Consensus,
 	opts ...Option,
 ) (BlockSync, error) {
+	timerFactory, err := prometheustimer.New(
+		"iotex_blocksync_perf",
+		"Performance of block sync",
+		[]string{"topic", "chainID"},
+		[]string{"default", strconv.FormatUint(uint64(cfg.Chain.ID), 10)},
+	)
+	if err != nil {
+		return nil, err
+	}
 	buf := &blockBuffer{
 		blocks:       make(map[uint64]*block.Block),
 		bc:           chain,
@@ -102,7 +114,8 @@ func NewBlockSyncer(
 		buf:              buf,
 		unicastHandler:   bsCfg.unicastHandler,
 		neighborsHandler: bsCfg.neighborsHandler,
-		worker:           newSyncWorker(chain.ChainID(), cfg, bsCfg.unicastHandler, bsCfg.neighborsHandler, buf),
+		worker:           newSyncWorker(chain.ChainID(), cfg, bsCfg.unicastHandler, bsCfg.neighborsHandler, buf, timerFactory),
+		timerFactory:     timerFactory,
 	}
 	return bs, nil
 }
@@ -129,7 +142,25 @@ func (bs *blockSyncer) Stop(ctx context.Context) error {
 
 // ProcessBlock processes an incoming latest committed block
 func (bs *blockSyncer) ProcessBlock(_ context.Context, blk *block.Block) error {
-	var needSync bool
+	var needSync, timercheck bool
+
+	timercheck = false
+	startTimer := bs.worker.BlockSyncReqTime()
+	blkHeight := blk.Height()
+	if timer, exist := startTimer[blkHeight]; exist {
+		timer.End()
+		delete(startTimer, blkHeight)
+		timercheck = true
+		log.L().Debug("get the start time for height", zap.Uint64("block height", blkHeight))
+	} else {
+		log.L().Debug("startTimer didn't record yet for height", zap.Uint64("block height", blkHeight))
+	}
+	timer := bs.timerFactory.NewTimer("flush a block")
+	defer func() {
+		if timercheck {
+			timer.End()
+		}
+	}()
 	moved, re := bs.buf.Flush(blk)
 	switch re {
 	case bCheckinLower:
