@@ -73,6 +73,8 @@ var (
 	ErrEvtConvert = errors.New("error when converting the event from/to the proto message")
 	// ErrEvtType represents an unexpected event type error
 	ErrEvtType = errors.New("error when check the event type")
+	// ErrOldCalibrateEvt indicates the error of ignoring old calibrate event
+	ErrOldCalibrateEvt = errors.New("ignore old calibrate event")
 
 	// consensusStates is a slice consisting of all consensus states
 	consensusStates = []fsm.State{
@@ -360,6 +362,11 @@ func (m *ConsensusFSM) handle(evt *ConsensusEvent) error {
 			zap.Error(err),
 		)
 		consensusEvtsMtc.WithLabelValues(string(evt.Type()), "backoff").Inc()
+	case ErrOldCalibrateEvt:
+		m.ctx.Logger().Debug(
+			"failed handle eCalibrate, because consensus height is bigger than eCalibrate height",
+			zap.Error(err),
+		)
 	default:
 		return errors.Wrapf(
 			err,
@@ -382,7 +389,7 @@ func (m *ConsensusFSM) calibrate(evt fsm.Event) (fsm.State, error) {
 	}
 	consensusHeight := m.ctx.Height()
 	if consensusHeight > height {
-		return sPrepare, errors.New("ignore old calibrate event")
+		return sPrepare, ErrOldCalibrateEvt
 	}
 	m.ctx.Logger().Debug(
 		"Calibrate consensus context",
