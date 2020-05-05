@@ -8,6 +8,7 @@ package factory
 
 import (
 	"context"
+	"encoding/hex"
 	"sort"
 
 	"github.com/iotexproject/go-pkgs/hash"
@@ -449,6 +450,10 @@ func (ws *workingSet) ValidateBlock(ctx context.Context, blk *block.Block) error
 	receipts, err := ws.process(ctx, blk.RunnableActions().Actions())
 	if err != nil {
 		log.L().Panic("Failed to update state.", zap.Uint64("height", ws.height), zap.Error(err))
+	}
+	log.L().Info("Receipts information", zap.Int("receipt number", len(receipts)))
+	for i, receipt := range receipts {
+		log.L().Info("Receipt", zap.Int("#", i), zap.String("ActionHash", hex.EncodeToString(receipt.ActionHash[:])), zap.Int("length of logs", len(receipt.Logs)))
 	}
 
 	digest, err := ws.digest()
